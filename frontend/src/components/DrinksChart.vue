@@ -2,27 +2,29 @@
 import { ref, onMounted, reactive } from 'vue';
 import { io } from 'socket.io-client';
 import Chart from 'chart.js/auto';
+import 'chartjs-adapter-date-fns'; // Important pour l'axe du temps
 
 // --- State ---
 const chartCanvas = ref<HTMLCanvasElement | null>(null);
 let chartInstance: Chart | null = null;
-// On utilise un 'reactive' pour que la liste des boissons se mette à jour dans le template
-const drinkState = reactive<{ names: string[] }>({
-  names: []
-});
+const drinkState = reactive<{ names: string[] }>({ names: [] });
 
 // --- Fonctions ---
 const buyDrink = async (drinkName: string) => {
   try {
-    // On appelle l'API du backend pour simuler un achat
-    const response = await fetch(`http://localhost:3000/buy/${encodeURIComponent(drinkName)}`);
-    if (!response.ok) {
-      throw new Error('La requête a échoué');
-    }
+    await fetch(`http://localhost:3000/buy/${encodeURIComponent(drinkName)}`);
     console.log(`Achat de ${drinkName} envoyé !`);
   } catch (error) {
     console.error("Erreur lors de l'achat:", error);
   }
+};
+
+// Fonction pour générer une couleur aléatoire pour chaque courbe
+const getRandomColor = () => {
+  const r = Math.floor(Math.random() * 255);
+  const g = Math.floor(Math.random() * 255);
+  const b = Math.floor(Math.random() * 255);
+  return `rgba(${r}, ${g}, ${b}, 0.8)`;
 };
 
 // --- Lifecycle Hooks ---
@@ -31,41 +33,68 @@ onMounted(() => {
   const ctx = chartCanvas.value.getContext('2d');
   if (!ctx) return;
 
-  // 1. Initialisation du graphique
+  // 1. Initialiser le graphique de type 'line'
   chartInstance = new Chart(ctx, {
-    type: 'bar',
+    type: 'line', // CHANGEMENT ICI
     data: {
-      labels: [],
-      datasets: [{
-        label: 'Prix en temps réel (€)',
-        data: [],
-        backgroundColor: 'rgba(75, 192, 192, 0.5)',
-        borderColor: 'rgba(75, 192, 192, 1)',
-        borderWidth: 1
-      }]
+      datasets: [] // Les datasets seront ajoutés dynamiquement
     },
     options: {
-      animation: { duration: 400 },
-      scales: { y: { beginAtZero: true } }
+      animation: { duration: 200 },
+      scales: {
+        x: {
+          type: 'time', // Axe X basé sur le temps
+          time: {
+            unit: 'second',
+            displayFormats: {
+              second: 'HH:mm:ss'
+            }
+          },
+          title: {
+            display: true,
+            text: 'Temps'
+          }
+        },
+        y: {
+          beginAtZero: true,
+          title: {
+            display: true,
+            text: 'Prix (€)'
+          }
+        }
+      }
     }
   });
 
   // 2. Connexion au serveur
   const socket = io('http://localhost:3000');
 
-  // 3. Écoute des mises à jour
-  socket.on('updatePrices', (drinks: { [key: string]: { price: number } }) => {
+  // 3. Écoute des mises à jour (logique entièrement refaite)
+  socket.on('updatePrices', (drinks: { [key: string]: { price: number, history: {x: number, y: number}[] } }) => {
     if (!chartInstance) return;
 
-    const drinkNames = Object.keys(drinks);
-    const drinkPrices = Object.values(drinks).map(d => d.price);
+    drinkState.names = Object.keys(drinks);
 
-    // Mise à jour de la liste des boissons pour les boutons
-    drinkState.names = drinkNames;
+    // Pour chaque boisson reçue, on met à jour ou on crée sa courbe
+    for (const drinkName in drinks) {
+      const drinkData = drinks[drinkName];
+      let dataset = chartInstance.data.datasets.find(ds => ds.label === drinkName);
 
-    // Mise à jour des données du graphique
-    chartInstance.data.labels = drinkNames;
-    chartInstance.data.datasets[0].data = drinkPrices;
+      if (dataset) {
+        // La courbe existe, on met juste à jour ses données
+        dataset.data = drinkData.history as any;
+      } else {
+        // Nouvelle boisson, on crée une nouvelle courbe
+        chartInstance.data.datasets.push({
+          label: drinkName,
+          data: drinkData.history as any,
+          borderColor: getRandomColor(),
+          fill: false,
+          tension: 0.1
+        });
+      }
+    }
+    
     chartInstance.update();
   });
 });
@@ -74,7 +103,7 @@ onMounted(() => {
 <template>
   <div class="main-container">
     <div class="chart-container">
-      <h1>Bar de la Bourse 🍻</h1>
+      <h1>Bar de la Bourse 📈</h1>
       <canvas ref="chartCanvas"></canvas>
     </div>
     
@@ -90,6 +119,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* Les styles restent les mêmes */
 .main-container {
   display: flex;
   flex-direction: column;
@@ -97,38 +127,34 @@ onMounted(() => {
   gap: 40px;
   padding: 20px;
 }
-
 .chart-container {
   width: 100%;
-  max-width: 800px;
+  max-width: 900px;
 }
-
 .controls-container {
   width: 100%;
   max-width: 800px;
-  background-color: #f9f9f9;
+  background-color: var(--color-background-soft);
   padding: 20px;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
-
 .buttons-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
-
 button {
   padding: 10px 15px;
   font-size: 16px;
   cursor: pointer;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border);
   border-radius: 5px;
-  background-color: #fff;
+  background-color: var(--color-background);
+  color: var(--color-text);
   transition: background-color 0.2s;
 }
-
 button:hover {
-  background-color: #e9e9e9;
+  background-color: var(--color-background-mute);
 }
 </style>

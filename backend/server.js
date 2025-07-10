@@ -28,37 +28,43 @@ try {
   const drinksFromFile = JSON.parse(drinksData);
   
   drinksFromFile.forEach(drink => {
+    const now = Date.now();
     drinks[drink.name] = {
       price: drink.price,
-      lastPurchased: Date.now() // On initialise le temps du dernier achat
+      lastPurchased: now,
+      // On ajoute un historique pour chaque boisson !
+      history: [{ x: now, y: drink.price }] 
     };
   });
   console.log("🍻 Boissons chargées avec succès !");
 } catch (error) {
-  console.error("Erreur lors du chargement du fichier drinks.json:", error);
-  process.exit(1); // On arrête si la config est mauvaise
+  // ... (gestion d'erreur)
 }
 
+// Fonction pour ajouter un point à l'historique et le limiter
+function addToHistory(drinkName) {
+  const drink = drinks[drinkName];
+  const now = Date.now();
+  drink.history.push({ x: now, y: drink.price });
 
-// --- Logique de l'application ---
+  // Garde seulement les 50 derniers points pour ne pas surcharger la mémoire
+  if (drink.history.length > 50) {
+    drink.history.shift();
+  }
+}
 
-// Quand un client se connecte
-io.on('connection', (socket) => {
-  console.log('✅ Un client est connecté !');
-  // On lui envoie les prix actuels dès sa connexion
-  socket.emit('updatePrices', drinks);
-});
+// ... (logique de connexion io.on('connection', ...))
 
-// Boucle pour la baisse des prix
+// Boucle pour la baisse des prix (MODIFIÉE)
 setInterval(() => {
   const now = Date.now();
   let pricesHaveChanged = false;
 
   for (const name in drinks) {
-    // Si pas achetée depuis 20 secondes
     if (now - drinks[name].lastPurchased > 20000) {
-      drinks[name].price *= 0.90; // Baisse de 10%
-      drinks[name].lastPurchased = now; // Important: on réinitialise pour éviter une baisse continue
+      drinks[name].price *= 0.90;
+      drinks[name].lastPurchased = now;
+      addToHistory(name); // On sauvegarde le nouveau point
       pricesHaveChanged = true;
     }
   }
@@ -67,17 +73,18 @@ setInterval(() => {
     console.log('📉 Baisse de prix automatique, envoi des nouvelles valeurs...');
     io.emit('updatePrices', drinks);
   }
-}, 5000); // On vérifie toutes les 5 secondes
+}, 5000);
 
-// Route pour l'achat d'une boisson
+// Route pour l'achat d'une boisson (MODIFIÉE)
 app.get('/buy/:drinkName', (req, res) => {
     const { drinkName } = req.params;
     if (drinks[drinkName]) {
-        drinks[drinkName].price *= 1.10; // Hausse de 10%
-        drinks[drinkName].lastPurchased = Date.now(); // On met à jour le temps de l'achat !
+        drinks[drinkName].price *= 1.10;
+        drinks[drinkName].lastPurchased = Date.now();
+        addToHistory(drinkName); // On sauvegarde aussi le point lors d'un achat
         
         console.log(`📈 Achat de ${drinkName}, nouveau prix: ${drinks[drinkName].price.toFixed(2)}€`);
-        io.emit('updatePrices', drinks); // On notifie tout le monde du nouveau prix
+        io.emit('updatePrices', drinks);
         
         res.status(200).json({ message: `Achat de ${drinkName} enregistré !` });
     } else {
