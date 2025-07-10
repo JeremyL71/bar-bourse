@@ -2,7 +2,7 @@
 import { ref, onMounted, reactive } from 'vue';
 import { io } from 'socket.io-client';
 import Chart from 'chart.js/auto';
-import 'chartjs-adapter-date-fns'; // Important pour l'axe du temps
+import 'chartjs-adapter-date-fns';
 
 // --- State ---
 const chartCanvas = ref<HTMLCanvasElement | null>(null);
@@ -13,18 +13,21 @@ const drinkState = reactive<{ names: string[] }>({ names: [] });
 const buyDrink = async (drinkName: string) => {
   try {
     await fetch(`http://localhost:3000/buy/${encodeURIComponent(drinkName)}`);
-    console.log(`Achat de ${drinkName} envoyé !`);
   } catch (error) {
     console.error("Erreur lors de l'achat:", error);
   }
 };
 
-// Fonction pour générer une couleur aléatoire pour chaque courbe
-const getRandomColor = () => {
-  const r = Math.floor(Math.random() * 255);
-  const g = Math.floor(Math.random() * 255);
-  const b = Math.floor(Math.random() * 255);
-  return `rgba(${r}, ${g}, ${b}, 0.8)`;
+// 🎨 Palette de couleurs prédéfinie pour une meilleure lisibilité
+const COLOR_PALETTE = [
+  '#3e95cd', '#8e5ea2', '#3cba9f', '#e8c3b9', '#c45850',
+  '#ff6384', '#36a2eb', '#ffce56', '#4bc0c0', '#9966ff'
+];
+let colorIndex = 0;
+const getNextColor = () => {
+  const color = COLOR_PALETTE[colorIndex % COLOR_PALETTE.length];
+  colorIndex++;
+  return color;
 };
 
 // --- Lifecycle Hooks ---
@@ -33,78 +36,101 @@ onMounted(() => {
   const ctx = chartCanvas.value.getContext('2d');
   if (!ctx) return;
 
-  // 1. Initialiser le graphique de type 'line'
   chartInstance = new Chart(ctx, {
-    type: 'line', // CHANGEMENT ICI
+    type: 'line',
     data: {
-      datasets: [] // Les datasets seront ajoutés dynamiquement
+      datasets: []
     },
     options: {
-      animation: { duration: 200 },
+      // ✅ Améliorations du responsive
+      responsive: true,
+      maintainAspectRatio: false, // Très important pour le responsive en hauteur
+
       scales: {
         x: {
-          type: 'time', // Axe X basé sur le temps
-          time: {
-            unit: 'second',
-            displayFormats: {
-              second: 'HH:mm:ss'
-            }
-          },
-          title: {
-            display: true,
-            text: 'Temps'
-          }
+          type: 'time',
+          time: { unit: 'second', displayFormats: { second: 'HH:mm:ss' }},
+          title: { display: true, text: 'Temps' }
         },
         y: {
-          beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Prix (€)'
-          }
+          beginAtZero: false, // Permet un meilleur zoom sur les variations
+          title: { display: true, text: 'Prix (€)' }
         }
+      },
+      // ✅ Améliorations des infobulles (tooltips)
+      plugins: {
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          callbacks: {
+            title: (tooltipItems) => {
+              // Affiche la date et l'heure dans le titre de l'infobulle
+              const date = new Date(tooltipItems[0].parsed.x);
+              return date.toLocaleTimeString();
+            },
+            label: (context) => {
+              // Affiche "Nom: Prix €"
+              let label = context.dataset.label || '';
+              if (label) {
+                label += ': ';
+              }
+              if (context.parsed.y !== null) {
+                label += new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(context.parsed.y);
+              }
+              return label;
+            }
+          }
+        },
+        legend: {
+          position: 'top', // La position de la légende
+        }
+      },
+      interaction: {
+        mode: 'index',
+        intersect: false,
       }
     }
   });
 
-  // 2. Connexion au serveur
   const socket = io('http://localhost:3000');
 
-  // 3. Écoute des mises à jour (logique entièrement refaite)
-  socket.on('updatePrices', (drinks: { [key: string]: { price: number, history: {x: number, y: number}[] } }) => {
+  socket.on('updatePrices', (drinks: { [key: string]: { history: {x: number, y: number}[] } }) => {
     if (!chartInstance) return;
-
     drinkState.names = Object.keys(drinks);
 
-    // Pour chaque boisson reçue, on met à jour ou on crée sa courbe
     for (const drinkName in drinks) {
       const drinkData = drinks[drinkName];
       let dataset = chartInstance.data.datasets.find(ds => ds.label === drinkName);
 
       if (dataset) {
-        // La courbe existe, on met juste à jour ses données
         dataset.data = drinkData.history as any;
       } else {
-        // Nouvelle boisson, on crée une nouvelle courbe
+        // ✅ Améliorations du style des lignes et des points
         chartInstance.data.datasets.push({
           label: drinkName,
           data: drinkData.history as any,
-          borderColor: getRandomColor(),
+          borderColor: getNextColor(),
+          borderWidth: 2, // Ligne plus épaisse
+          pointRadius: 2, // Ajoute des petits points
+          pointBackgroundColor: 'white',
           fill: false,
           tension: 0.1
         });
       }
     }
     
-    chartInstance.update();
+    chartInstance.update('quiet'); // 'quiet' pour une animation plus subtile
   });
 });
 </script>
 
 <template>
   <div class="main-container">
-    <div class="chart-container">
+    <div class="chart-wrapper">
       <h1>Bar de la Bourse 📈</h1>
-      <canvas ref="chartCanvas"></canvas>
+      <div class="chart-container">
+        <canvas ref="chartCanvas"></canvas>
+      </div>
     </div>
     
     <div class="controls-container">
@@ -119,18 +145,31 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* Les styles restent les mêmes */
 .main-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 40px;
-  padding: 20px;
-}
-.chart-container {
   width: 100%;
-  max-width: 900px;
+  gap: 2rem;
+  padding: 1rem;
 }
+
+.chart-wrapper {
+  width: 100%;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* On donne une hauteur au conteneur du graphique pour le responsive */
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 50vh; /* Hauteur relative à la vue */
+  min-height: 400px; /* Hauteur minimale */
+}
+
 .controls-container {
   width: 100%;
   max-width: 800px;
@@ -139,11 +178,13 @@ onMounted(() => {
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
+
 .buttons-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
+
 button {
   padding: 10px 15px;
   font-size: 16px;
@@ -154,6 +195,7 @@ button {
   color: var(--color-text);
   transition: background-color 0.2s;
 }
+
 button:hover {
   background-color: var(--color-background-mute);
 }
